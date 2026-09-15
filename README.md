@@ -33,7 +33,6 @@ reference/
 2. 打开 [hupu-codex.user.js](https://github.com/George11811/hupu-codex/blob/master/hupu-codex.user.js)，点 Raw 后安装。
 3. 访问 https://bbs.hupu.com/ 。
 
-装到 Tampermonkey / Violentmonkey 里即可，`@match https://bbs.hupu.com/*`，无需任何额外配置。
 不登录也能正常浏览；回帖 / 点亮 / 发新帖要用你**已有的**虎扑登录态（脚本不会替你登录，
 也不碰 cookie）。
 
