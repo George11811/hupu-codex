@@ -3,7 +3,7 @@
 // @namespace    https://bbs.hupu.com/
 // @version      1.0.0
 // @description  把虎扑社区（bbs.hupu.com）换成 Codex 桌面 app 风格：左 rail + 主区 + 右侧代码面板 + 应急伪装。只改外观，不改动站点数据。
-// @author       port of "V2EX · Codex 外观"
+// @author       link
 // @match        https://bbs.hupu.com/*
 // @icon         https://w1.hoopchina.com.cn/images/pc/old/favicon.ico
 // @grant        none

@@ -30,7 +30,7 @@ reference/
 ## 安装
 
 1. 安装 [Tampermonkey](https://www.tampermonkey.net/)。
-2. 打开 [hupu-codex.user.js]()，点 Raw 后安装。
+2. 打开 [hupu-codex.user.js](https://github.com/George11811/hupu-codex/blob/master/hupu-codex.user.js)，点 Raw 后安装。
 3. 访问 https://bbs.hupu.com/ 。
 
 装到 Tampermonkey / Violentmonkey 里即可，`@match https://bbs.hupu.com/*`，无需任何额外配置。
