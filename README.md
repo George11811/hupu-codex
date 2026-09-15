@@ -1,7 +1,9 @@
 # 虎扑社区 · Codex 外观（摸鱼脚本）
 
 把 `bbs.hupu.com` 换成 Codex 桌面 app 的样子：**左 rail + 主区 + 右侧代码面板**，明暗双模式，
-带应急伪装键。移植自 [reference/v2ex-codex.user.js](./reference/v2ex-codex.user.js)。
+带应急伪装键。
+
+移植自 [Linux DO · Codex 外观](https://github.com/czm15053/linuxdo-idea-ui)，作者 [@czm15053](https://github.com/czm15053)。
 
 ![版块列表](docs/screenshots/01-list-dark.webp)
 
@@ -26,6 +28,10 @@ reference/
 ```
 
 ## 安装
+
+1. 安装 [Tampermonkey](https://www.tampermonkey.net/)。
+2. 打开 [hupu-codex.user.js]()，点 Raw 后安装。
+3. 访问 https://bbs.hupu.com/ 。
 
 装到 Tampermonkey / Violentmonkey 里即可，`@match https://bbs.hupu.com/*`，无需任何额外配置。
 不登录也能正常浏览；回帖 / 点亮 / 发新帖要用你**已有的**虎扑登录态（脚本不会替你登录，
@@ -315,3 +321,12 @@ npm run shots               # 重新生成截图到 test/shots/
 - 回帖成功后不会自动跳到你那条回复所在的页；顶部 toast 会提示一句
   （站点自己会跳到 `/<fid>-1.html`，看着像他们代码里的 bug，没跟）。
 - 未接管的原生页面（`/search`、登录页…）只加 rail，其余样式一律不碰。
+
+
+## 授权与致谢
+
+本仓库的代码以 **MIT** 发布（见 `LICENSE`）。
+
+**参考自 [Linux DO · Codex 外观](https://github.com/czm15053/linuxdo-idea-ui)，作者 czm15053。**
+配色 token（实测自 Codex 桌面 app）、三栏布局、右侧代码面板、底部输入框、
+agent 思考块、hover 操作胶囊、明暗双模式这些设计都是那个脚本的成果。
