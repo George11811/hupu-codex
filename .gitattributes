@@ -1,0 +1,10 @@
+# 仓库里统一存 LF，别让 Windows 的 CRLF 混进来
+* text=auto eol=lf
+
+# 图片
+*.png binary
+*.webp binary
+
+# 抓下来的页面 / 锁文件不是手写代码，折叠掉省得污染 diff 统计
+test/fixtures/* linguist-generated=true
+test/package-lock.json linguist-generated=true

@@ -1,0 +1,22 @@
+{
+  "name": "hupu-codex-tests",
+  "private": true,
+  "version": "1.0.0",
+  "description": "hupu-codex.user.js 的测试与截图工具",
+  "scripts": {
+    "test": "node unit.js && node run.js && node interact.js && node login.js && node images.js && node timing.js && node browser.js",
+    "test:unit": "node unit.js",
+    "test:parse": "node run.js",
+    "test:interact": "node interact.js",
+    "test:login": "node login.js",
+    "test:images": "node images.js",
+    "test:timing": "node timing.js",
+    "test:browser": "node browser.js",
+    "shots": "node shots.js && node bootshot.js",
+    "bootshot": "node bootshot.js"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1",
+    "playwright-core": "^1.63.0"
+  }
+}

@@ -1,0 +1,16 @@
+# 依赖
+node_modules/
+
+# 测试 / 截图产物：都是本地生成的，不进仓库
+test/shots/
+test/broken*.js
+
+# 本地留档的截图（改造前的原生页面等，见 docs/screenshots/README.md）
+docs/screenshots/archive/
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

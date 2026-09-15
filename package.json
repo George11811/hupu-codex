@@ -1,0 +1,16 @@
+{
+  "name": "hupu-codex",
+  "version": "1.0.0",
+  "private": true,
+  "description": "把虎扑社区（bbs.hupu.com）改造成 Codex 桌面 app 外观的用户脚本",
+  "keywords": [
+    "userscript",
+    "tampermonkey",
+    "hupu",
+    "codex"
+  ],
+  "scripts": {
+    "test": "npm --prefix test test",
+    "shots": "npm --prefix test run shots"
+  }
+}
