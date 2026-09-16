@@ -7,25 +7,8 @@
 
 ![版块列表](docs/screenshots/01-list-dark.webp)
 
-```
-hupu-codex.user.js        ← 脚本本体（装这个）
-README.md                 ← 本文件
-package.json              ← 只为跑测试/截图（无运行时依赖）
-docs/screenshots/         ← README 用的截图
-test/                     ← 测试 + 截图工具
-  fixtures/               ← 真实抓下来的虎扑页面，测试用
-  unit.js                 ← 纯函数单测：高亮器 / 假代码生成 / markdown / num
-  run.js                  ← 解析测试（jsdom）：数据提取对不对
-  interact.js             ← 交互测试（jsdom）：点按钮 / 按键盘 / 存草稿
-  login.js                ← 登录态测试：把 fixture 改成已登录，验三端页面都显示对
-  images.js               ← 图片尺寸 / 保真（按 URL 伪造对应尺寸的图来量）
-  timing.js               ← 启动时序测试：不闪原样式（分块慢发 HTML 复现真实网络）
-  browser.js              ← 真实浏览器测试（本机 Chrome）：布局 / CSS / 响应式
-  shots.js / bootshot.js  ← 生成截图到 test/shots/
-  README.md               ← 测试怎么跑
-reference/
-  v2ex-codex.user.js      ← 参考的原脚本（v2ex 版，不属于本项目产物）
-```
+## 设置面板
+![风暴要火](docs/screenshots/setting-panel.png)
 
 ## 安装
 
