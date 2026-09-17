@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         虎扑社区 · Codex 外观
 // @namespace    https://bbs.hupu.com/
-// @version      1.0.0
+// @version      1.1.0
 // @description  把虎扑社区（bbs.hupu.com）换成 Codex 桌面 app 风格：左 rail + 主区 + 右侧代码面板 + 应急伪装。只改外观，不改动站点数据。
 // @author       link
 // @match        https://bbs.hupu.com/*
@@ -16,7 +16,7 @@
  * 1. 数据来源完全不同，而且比 v2ex 好得多。
  *    v2ex 是纯服务端渲染的 MPA、没有 JSON 端点，只能解析已渲染的 DOM。
  *    虎扑是两套前端：
- *      · 版块页 / 首页 / 分类页 → React SPA，整页数据内嵌在 window.$$data 里
+ *      · 版块页 / 首页 / 分类页 → React 服务端渲染，整页数据内嵌在 window.$$data 里
  *      · 帖子详情页              → Next.js，整页数据内嵌在 <script id="__NEXT_DATA__">
  *    两者都是「一次性内嵌完整 JSON」，所以本脚本**优先读 JSON**，
  *    拿到的字段（亮数、回复数、浏览数、楼层、引用关系、发布时间戳）比 DOM 全得多，
@@ -36,6 +36,11 @@
  *    一键复制 + 跳原生回复框。点楼层的「回复」会把引用和 @ 写进草稿。
  *
  * 5. 原生根节点 id 有两套（列表页 #container、详情页 #__next），接管时要一起隐藏。
+ *
+ * 6. 站内链接走「软导航」：fetch 回目标页 HTML、解析出数据后在同一个文档里重画，
+ *    浏览器不换文档 —— 所以切版块 / 进帖子 / 翻页不会再闪一下虎扑原生页面。
+ *    （虎扑是多文档站点，整页跳转时新文档从创建到第一次绘制可能只要 ~30ms，
+ *    早于油猴注入，这个窗口在页面里压不掉。）详见「软导航」一节。
  * ────────────────────────────────────────────────────────────────────────────
  */
 
@@ -481,9 +486,18 @@
     return null;
   }
 
+  /*
+   * SRC = 「当前展示页面」对应的文档。
+   *
+   * 正常情况就是 document；做软导航（见「软导航」一节）时会被换成 fetch 回来、
+   * 用 DOMParser 解析出的那份 —— 数据读取与 DOM 兜底都从它取，界面照旧画在真实
+   * document 上。这样软导航不用改任何解析函数的签名。
+   */
+  let SRC = document;
+
   /** 在页面内联脚本里找 `<marker>{...}` 并解析（marker 例如 "window.$$data="） */
   function readInlineJson(marker) {
-    const scripts = document.querySelectorAll("script:not([src])");
+    const scripts = SRC.querySelectorAll("script:not([src])");
     for (const s of scripts) {
       const t = s.textContent || "";
       if (t.indexOf(marker) < 0) continue;
@@ -501,16 +515,19 @@
   function pageData() {
     if (DATA_CACHE) return DATA_CACHE;
 
-    // 1) window.$$data（React 列表页）—— 优先读全局，读不到再读内联脚本文本
+    // 1) window.$$data（React 列表页）—— 优先读全局，读不到再读内联脚本文本。
+    //    软导航时 SRC 是一份游离文档，没有 window，只能读内联 JSON
     let sdata = null;
-    try {
-      if (window.$$data && typeof window.$$data === "object") sdata = window.$$data;
-    } catch { /* ignore */ }
+    if (SRC === document) {
+      try {
+        if (window.$$data && typeof window.$$data === "object") sdata = window.$$data;
+      } catch { /* ignore */ }
+    }
     if (!sdata) sdata = readInlineJson("window.$$data=");
 
     // 2) #__NEXT_DATA__（Next.js 详情页）
     let next = null;
-    const nx = document.getElementById("__NEXT_DATA__");
+    const nx = SRC.getElementById("__NEXT_DATA__");
     if (nx) {
       try { next = JSON.parse(nx.textContent || "{}"); } catch { next = null; }
     }
@@ -888,11 +905,11 @@
 
     if (!data && isSupported(r)) {
       try {
-        data = r.kind === "thread" ? domParse.thread(document) : {
-          kind: "list", listKind: r.listKind, title: document.title,
+        data = r.kind === "thread" ? domParse.thread(SRC) : {
+          kind: "list", listKind: r.listKind, title: SRC.title,
           desc: "", countText: "", base: r.base || "/",
           page: 1, totalPages: 1, sort: "2", tabs: [],
-          rows: domParse.listRows(document), breadCrumb: [],
+          rows: domParse.listRows(SRC), breadCrumb: [],
           categories: [], hot: [], trending: [], careList: [], author: null
         };
       } catch (err) {
@@ -1323,9 +1340,9 @@
     }
     if (e.target.closest("[data-rail-refresh]")) {
       e.preventDefault();
-      DATA_CACHE = null;
-      PAGE = null;
-      render();
+      // 软导航过的页面物理 DOM 是旧的，得重新拉一份当前地址；物理 DOM 直接重读
+      if (!VIEW_IS_DOC) softNav(location.href, { push: false, force: true });
+      else { DATA_CACHE = null; PAGE = null; render(); }
       toastNow("已重新读取数据");
       return;
     }
@@ -1474,7 +1491,7 @@
   let RENDERED_WITH_DATA = false;
 
   function render() {
-    if (NATIVE_TITLE === null) NATIVE_TITLE = document.title;
+    if (NATIVE_TITLE === null) { NATIVE_TITLE = document.title; DOC_TITLE = document.title; }
     const page = collectPage();
     PAGE = page;
     const r = page.route;
@@ -5123,6 +5140,160 @@
     document.documentElement.classList.remove(ROOT_CLASS, LOCK_CLASS, BOOT_CLASS, "hpcx-rail-open");
   }
 
+  /* ============================== 软导航 ==============================
+   *
+   * 虎扑是多文档站点：点版块、点帖子、翻页都是整页跳转。整页跳转会创建一份新
+   * 文档，而油猴只能在 document-start 注入脚本 —— 新文档从创建到第一次绘制可能
+   * 只有 ~30ms，脚本还没来得及挂 BOOT/LOCK，那一小段画出来的就是虎扑原生页面。
+   * 这个窗口在页面里没法再往前压。
+   *
+   * 所以脚本自己 UI 里的站内链接不再让浏览器换文档：fetch 回目标页 HTML、用
+   * DOMParser 解析成一份游离文档（SRC），套同一套数据读取逻辑，在同一个文档里
+   * 重画。文档不换，原生页面就没有机会露脸。地址栏用 pushState 同步，前进/后退
+   * 也能用；解析不了或不支持的路由，退回原来的整页跳转。
+   * ================================================================= */
+
+  const DOC_URL = location.href;   // 物理 DOM 真正对应的地址（软导航不改 DOM）
+  let VIEW_URL = DOC_URL;          // 当前展示的地址
+  let VIEW_IS_DOC = true;          // 当前展示的是不是物理 DOM（软导航后为 false）
+  let DOC_TITLE = null;            // 物理 DOM 的标题（软导航改过标题后要能还原）
+  let LAST_URL = location.href;
+  let NAV_SEQ = 0;
+
+  /** 这个地址能不能软导航（同源 hupu + 脚本能解析的路径） */
+  function softable(url) {
+    let u;
+    try { u = new URL(url, location.href); } catch { return false; }
+    if (u.origin !== location.origin) return false;
+    if (!/(^|\.)hupu\.com$/i.test(u.hostname)) return false;
+    const p = u.pathname.replace(/\/+$/, "") || "/";
+    if (p === "/search") return false;                  // 搜索页解析不了，直接整页跳转
+    if (p === "/") return true;
+    if (/^\/\d+(?:-\d+)?\.html$/.test(p)) return true; // 帖子：/123.html、/123-2.html
+    if (/^\/[\w-]+$/.test(p)) return true;              // 版块 / 分类（含 -postdate / -hot / -2）
+    return false;
+  }
+
+  /**
+   * 软导航：地址改成 url，同时在同一份文档里重画。
+   * 任何一步出问题都退回 location.href（整页跳转，行为同以前）。
+   */
+  function softNav(url, opts) {
+    opts = opts || {};
+    if (otherThemeActive() || !softable(url)) { location.href = url; return; }
+
+    let target;
+    try { target = new URL(url, location.href).href; } catch { location.href = url; return; }
+    if (target === VIEW_URL && !opts.force) return;    // 已经展示的就是这页
+    if (opts.push !== false) {
+      try { history.pushState(null, "", target); } catch { location.href = target; return; }
+    }
+    LAST_URL = location.href;
+
+    const seq = ++NAV_SEQ;
+    toastNow("正在打开 " + (new URL(target).pathname || "/") + " …");
+
+    fetch(target, {
+      credentials: "same-origin",
+      headers: { Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" }
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.text().then((html) => ({ html: html, finalUrl: res.url || target }));
+      })
+      .then((res) => {
+        if (seq !== NAV_SEQ) return;                     // 期间又点了一次，这次作废
+        if (res.finalUrl !== location.href) {            // 跟随过重定向
+          try { history.replaceState(null, "", res.finalUrl); } catch { /* ignore */ }
+          LAST_URL = location.href;
+        }
+        const doc = new DOMParser().parseFromString(res.html, "text/html");
+        const prevSrc = SRC, prevCache = DATA_CACHE;
+        SRC = doc;
+        DATA_CACHE = null;
+        if (!isSupported(route())) {                     // 不支持的路由：还原，走整页跳转
+          SRC = prevSrc; DATA_CACHE = prevCache;
+          throw new Error("这个页面不接管主区");
+        }
+        if (doc.title) NATIVE_TITLE = doc.title;
+        PAGE = null;
+        try {
+          render();                                      // 用 SRC（新文档）+ location（新地址）重画
+          // render() 在拿不到数据时会摘掉 LOCK/BOOT、露出（物理 DOM 的）原生页面。
+          // 软导航下那等于「地址变了、内容还是旧页」，不如退回整页跳转。
+          if (!PAGE || !PAGE.data) throw new Error("没有解析出数据");
+        } catch (err) {
+          SRC = prevSrc; DATA_CACHE = prevCache;
+          throw err;
+        }
+        const threadBox = document.querySelector(".hpcx-thread");
+        if (threadBox) threadBox.scrollTop = 0;          // 新页面从头看起
+        VIEW_URL = location.href;
+        VIEW_IS_DOC = false;
+      })
+      .catch((err) => {
+        if (seq !== NAV_SEQ) return;
+        console.warn("[hupu-codex] 软导航失败，改用整页跳转：", err);
+        location.href = target;
+      });
+  }
+
+  /** 前进/后退：当前位置不是软导航自己切的，重新拉一份渲染 */
+  function onUrlChange() {
+    if (location.href === LAST_URL) return;
+    LAST_URL = location.href;
+    if (otherThemeActive()) return;
+    if (location.href === DOC_URL) {
+      SRC = document; DATA_CACHE = null; PAGE = null;
+      NATIVE_TITLE = DOC_TITLE;
+      VIEW_URL = DOC_URL; VIEW_IS_DOC = true;
+      render();
+      return;
+    }
+    if (softable(location.href)) softNav(location.href, { push: false });
+    else location.reload();
+  }
+
+  function hookHistory() {
+    if (hookHistory._bound) return;
+    hookHistory._bound = true;
+    ["pushState", "replaceState"].forEach((k) => {
+      const orig = history[k];
+      if (typeof orig !== "function") return;
+      history[k] = function () {
+        const ret = orig.apply(this, arguments);
+        setTimeout(onUrlChange, 0);
+        return ret;
+      };
+    });
+    window.addEventListener("popstate", onUrlChange);
+    window.addEventListener("hashchange", onUrlChange);
+  }
+
+  /**
+   * 脚本自己画出来的界面（rail / 主区，都带 data-hpcx）里的站内链接走软导航。
+   * 监听挂在 document 冒泡阶段、且在 bindRail 之后注册 —— 这样脚本自己的交互
+   * （展开分类、切换排序等）先跑完并 preventDefault，这里靠 defaultPrevented
+   * 跳过，不会抢掉它们。
+   */
+  function bindSoftLinks() {
+    if (bindSoftLinks._bound) return;
+    bindSoftLinks._bound = true;
+    document.addEventListener("click", (e) => {
+      if (e.defaultPrevented) return;
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const a = e.target.closest && e.target.closest("a[href]");
+      if (!a || !a.closest("[data-hpcx]")) return;
+      if (a.target && a.target !== "_self") return;
+      let u;
+      try { u = new URL(a.href, location.href); } catch { return; }
+      if (u.href === location.href) return;
+      if (!softable(u.href)) return;
+      e.preventDefault();
+      softNav(u.href);
+    });
+  }
+
   /* ============================== 启动 ============================== */
 
   /**
@@ -5210,6 +5381,8 @@
     bindSettingsKeys();
     bindPublish();
     bindRail();
+    bindSoftLinks();   // 必须在 bindRail 之后：站内链接的软导航要让 rail 自己的交互先跑
+    hookHistory();
 
     domReady().then(() => {
       scheduleApply();
