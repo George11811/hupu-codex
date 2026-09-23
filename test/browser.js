@@ -604,6 +604,113 @@ function check(name, cond, extra) {
     check("伪装时看不到帖子正文（不可能一眼被看穿的兜底）", b.forumTextVisible === false);
   }
 
+  /* ---------- 页面透明度 + 侧边栏模式（真实指针离开事件） ---------- */
+  console.log("\n▶ 页面透明度 / 侧边栏模式");
+  await go("/topic-daily", { pageAlpha: 40, sidebarMask: true });
+  {
+    /*
+     * 透明度只该作用在**脚本自绘的两块**（rail + 主区）上：
+     * 伪装视图、设置面板必须始终保持不透明 —— 否则滑杆拖到 20% 之后
+     * 连面板本身都看不清，没法再调回来（这正是把 opacity 挂在
+     * 这两个容器而不是 <html>/<body> 上的原因，所以这几条断言就是那条设计决定本身）。
+     */
+    const t = await page.evaluate(() => {
+      const cs = (s) => getComputedStyle(document.querySelector(s));
+      return {
+        main: cs(".hpcx-main").opacity,
+        rail: cs(".hpcx-rail").opacity,
+        alpha: document.documentElement.style.getPropertyValue("--hpcx-chrome-alpha").trim(),
+        html: getComputedStyle(document.documentElement).opacity,
+        body: getComputedStyle(document.body).opacity,
+        bossExists: !!document.querySelector(".hpcx-boss")
+      };
+    });
+    check("透明度滑杆 40% → rail / 主区 opacity 0.4", t.main === "0.4" && t.rail === "0.4", JSON.stringify(t));
+    check("CSS 变量按百分比换算（40 → 0.4）", t.alpha === "0.4", t.alpha);
+    check("html / body 本身不受影响（只有脚本自绘的界面变淡）",
+      t.html === "1" && t.body === "1", JSON.stringify(t));
+
+    /*
+     * 用真实鼠标移动来触发指针离开（page.mouse.move 是浏览器自己派发的可信事件）。
+     * 不能自己 dispatch 一个 PointerEvent("pointerleave")：那是 0,0 坐标的合成事件，
+     * 脚本会明确忽略它（否则「藏好」和「放回来」会互相打架、伪装视图闪一下就没）。
+     */
+    await page.mouse.move(800, 400);
+    await page.mouse.move(800, -5);            // 移出视口上边（往地址栏去）
+    await page.waitForTimeout(250);
+    const hidden = await page.evaluate(() => {
+      const cs = (s) => getComputedStyle(document.querySelector(s));
+      const box = document.querySelector(".hpcx-boss");
+      return {
+        on: document.documentElement.classList.contains("hpcx-boss-on"),
+        rail: cs(".hpcx-rail").display,
+        main: cs(".hpcx-main").display,
+        bossOpacity: getComputedStyle(box).opacity,
+        boss: Math.round(box.getBoundingClientRect().width)
+      };
+    });
+    check("指针离开页面区域 → 自动进伪装视图", hidden.on && hidden.rail === "none" && hidden.main === "none",
+      JSON.stringify(hidden));
+    check("伪装视图不受透明度影响（必须不透明，否则一眼就看穿）", hidden.bossOpacity === "1", hidden.bossOpacity);
+    check("伪装视图仍然铺满视口", hidden.boss === 1600, "宽 " + hidden.boss);
+
+    // 回到页面 → 自动恢复
+    await page.mouse.move(800, 400);
+    await page.waitForTimeout(250);
+    const back = await page.evaluate(() => ({
+      on: document.documentElement.classList.contains("hpcx-boss-on"),
+      main: getComputedStyle(document.querySelector(".hpcx-main")).display,
+      opacity: getComputedStyle(document.querySelector(".hpcx-main")).opacity
+    }));
+    check("指针回到页面 → 自动恢复，透明度设置还在",
+      !back.on && back.main !== "none" && back.opacity === "0.4", JSON.stringify(back));
+
+    // 再离开一次：验证不是「只生效一次」
+    await page.mouse.move(800, -5);
+    await page.waitForTimeout(250);
+    check("再离开一次仍然会藏", await page.evaluate(() =>
+      document.documentElement.classList.contains("hpcx-boss-on")));
+    await page.mouse.move(800, 400);
+    await page.waitForTimeout(200);
+  }
+
+  // 关掉「回到页面自动恢复」→ 回来也不退出，得自己按应急键
+  await go("/topic-daily", { sidebarMask: true, sidebarMaskRestore: false });
+  {
+    await page.mouse.move(800, 400);
+    await page.mouse.move(800, -5);
+    await page.waitForTimeout(250);
+    check("关掉自动恢复 → 离开页面照样藏", await page.evaluate(() =>
+      document.documentElement.classList.contains("hpcx-boss-on")));
+    await page.mouse.move(800, 400);
+    await page.waitForTimeout(250);
+    const still = await page.evaluate(() => ({
+      on: document.documentElement.classList.contains("hpcx-boss-on"),
+      main: getComputedStyle(document.querySelector(".hpcx-main")).display
+    }));
+    check("关掉自动恢复 → 指针回到页面仍停在伪装视图", still.on && still.main === "none",
+      JSON.stringify(still));
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
+    check("关掉自动恢复时应急键仍然能退出", await page.evaluate(() =>
+      !document.documentElement.classList.contains("hpcx-boss-on")));
+  }
+
+  // 关掉侧边栏模式之后，同样的指针离开不该有任何反应
+  await go("/topic-daily", { pageAlpha: 100, sidebarMask: false });
+  {
+    await page.mouse.move(800, 400);
+    await page.mouse.move(800, -5);
+    await page.waitForTimeout(250);
+    const off = await page.evaluate(() => ({
+      on: document.documentElement.classList.contains("hpcx-boss-on"),
+      opacity: getComputedStyle(document.querySelector(".hpcx-main")).opacity
+    }));
+    check("关掉侧边栏模式 → 离开页面不伪装", !off.on, JSON.stringify(off));
+    check("透明度回到 100% → 完全不透明", off.opacity === "1", off.opacity);
+  }
+
   check("全程无 JS 报错", errors.length === 0, errors.join(" | "));
 
   await browser.close();

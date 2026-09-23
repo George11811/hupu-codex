@@ -63,6 +63,13 @@
     panelWidth: 440,
     /** 正文最大宽度 */
     threadMaxWidth: 860,
+    /**
+     * 页面透明度（%）。100 = 不透明；调小就整页透出去，
+     * 能看见下面的窗口（比如背后的编辑器 / 终端），是摸鱼时的另一层掩护。
+     * 只作用于**脚本自己画的那两块**（左 rail + 主区），伪装视图和设置面板
+     * 永远不透明，否则调低之后就点不着了。
+     */
+    pageAlpha: 100,
     /** 是否显示右侧代码面板（纯氛围装饰） */
     codePanel: true,
     /** 代码面板语言：rust / python / typescript / go / java */
@@ -86,6 +93,19 @@
      * 无论配成什么，Ctrl+Shift+H 始终有效。
      */
     stealthKey: "esc2",
+    /**
+     * 侧边栏模式：光标一离开页面区域就自动进入应急伪装（等于替你按两下 Esc），
+     * 回到页面上再自动恢复。手动按出来的伪装不会被它恢复掉；
+     * 设置面板开着时不自动伪装（否则没法调设置）。
+     */
+    sidebarMask: false,
+    /**
+     * 侧边栏模式的自动恢复：回到页面时是否自动退出伪装。
+     *   true （默认）光标回到页面上就恢复；
+     *   false        只负责「藏」，恢复得自己按应急键 —— 「人走开」那一下是
+     *                最需要藏的时刻，而「鼠标滑回来」不代表就安全了。
+     */
+    sidebarMaskRestore: true,
     /** 左栏品牌名。空字符串 = 由 stealth 决定（Codex / 虎扑社区） */
     brandName: "",
     /** 代码面板 / 面包屑 / 标签页标题里的项目名 */
@@ -183,11 +203,21 @@
     root.style.setProperty("--hpcx-thread-max", cfg("threadMaxWidth") + "px");
     root.style.setProperty("--hpcx-thumb-w", cfg("thumbWidth") + "px");
     root.style.setProperty("--hpcx-thumb-h", cfg("thumbHeight") + "px");
+    root.style.setProperty("--hpcx-chrome-alpha", String(percent(cfg("pageAlpha"), 100, 20, 100) / 100));
     applyLightsTint();
     syncMode();
     applyFavicon();
     syncTitle();
+    syncBossWithStealth();
+    syncSidebarMask();
     setPanelHidden(!cfg("codePanel"), false);
+  }
+
+  /** 顺手用的 clamp：把设置值收进 [min, max]，非法值退回 fallback */
+  function percent(v, fallback, min, max) {
+    const n = Number(v);
+    if (!isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, Math.round(n)));
   }
 
   /**
@@ -3408,6 +3438,11 @@
       --hpcx-thread-max: 860px;
       --hpcx-thumb-w: 300px;
       --hpcx-thumb-h: 200px;
+      /* 页面透明度。1 = 不透明。
+         只喂给**脚本自己画的两块**（左 rail + 主区），页面上其他东西一律不碰：
+         未接管的原生页面（/search、登录页…）照样原样显示，不会被这条设置弄淡。
+         值走 --hpcx-chrome-alpha 这个中间变量，以后要加「只淡某一侧」也只改这里。 */
+      --hpcx-chrome-alpha: 1;
       --cx-radius: 10px;
     }
 
@@ -3503,6 +3538,20 @@
     html.${ROOT_CLASS}:not(.${LOCK_CLASS}) #__next {
       margin-left: var(--cx-rail-w) !important;
     }
+
+    /* ---------- 页面透明度（设置面板里的滑杆） ----------
+     *
+     * 只给**脚本自绘的界面**用：左 rail + 主区。选择器里写的是这两个类，
+     * 别的一律不受影响 —— 原生页面（未接管的路由）、伪装视图（.hpcx-boss）、
+     * 设置面板、灯箱、toast 都不在这条规则里，所以透明度调到底也还点得动。
+     *
+     * 也不挂 <html> / <body>：那样会连面板本身一起变透明，滑杆拖到 20% 之后
+     * 就没法再调回来了。
+     *
+     * 用 opacity 而不是 filter：主区里有 position: fixed 的后代（伪装视图、
+     * 悬停大图、拖拽把手），filter 会让它们改以本容器为包含块，位置会一起飘。
+     */
+    .hpcx-rail, .hpcx-main { opacity: var(--hpcx-chrome-alpha, 1); }
 
     /* ================= 左 rail ================= */
     .hpcx-rail {
@@ -4504,6 +4553,10 @@
     .hpcx-switch.on { background: var(--cx-blue); }
     .hpcx-switch.on > span { transform: translateX(16px); background: #fff; }
     .hpcx-range { width: 150px; accent-color: var(--cx-blue); }
+    /* 依赖项没满足：整行压暗 + 控件禁用（点得动但没反应最难查） */
+    .hpcx-set-row-off .hpcx-set-label,
+    .hpcx-set-row-off .hpcx-set-ctrl { opacity: .45; }
+    .hpcx-switch:disabled, .hpcx-range:disabled, .hpcx-select:disabled { cursor: not-allowed; }
     .hpcx-select, .hpcx-text {
       background: var(--cx-bg-inset); color: var(--cx-text);
       border: 1px solid var(--cx-border); border-radius: 8px;
@@ -4729,6 +4782,16 @@
     document.documentElement.classList.toggle(BOSS_CLASS, !!on);
   }
 
+  /**
+   * 设置面板里关掉「伪装模式」时，伪装视图得跟着退出 ——
+   * 否则它会卡在屏幕上，而且再按应急键也切不掉（setBoss 会直接被 stealth 挡掉）。
+   */
+  function syncBossWithStealth() {
+    if (!bossOn()) return;
+    if (cfg("stealth")) return;
+    setBoss(false);
+  }
+
   /** "ctrl+shift+h" / "f2" 这类组合键匹配 */
   function bossKeyMatch(e, spec) {
     const parts = String(spec || "").toLowerCase().split("+").map((x) => x.trim()).filter(Boolean);
@@ -4792,6 +4855,108 @@
     }, true);
   }
 
+  /* ---------- 侧边栏模式：光标离开页面区域就自动伪装 ----------
+   *
+   * 「离开页面区域」= 指针移出文档元素（往浏览器地址栏 / 标签栏 / 另一个窗口去，
+   * 或者滑到屏幕外的另一块屏幕）。这正是「有人凑过来」的那一刻，
+   * 效果等同于替你按两下 Esc：整个视口变成代码编辑器 + 终端。
+   *
+   * 几个刻意的取舍：
+   *   · 只恢复「自己藏出来的」那一次。手动按出来的伪装，回到页面也不会被撤掉，
+   *     否则等于把应急键的意思改了。
+   *   · 设置面板开着时不自动伪装：调设置时指针本来就常往面板外的窗口动，
+   *     动不动整页被盖住没法用。
+   *   · 判据用了 pointerleave / pointerenter（Chrome、Safari、Firefox 都支持），
+   *     不支持的环境里退化成 mouseleave / mouseenter。
+   *   · 混进子文档（评论 iframe 等）会派发 relatedTarget 为 null 的 mouseout，
+   *     那不是「离开窗口」，只在元素上的 mouseleave 事件里才可能误判 —— pointerleave
+   *     不会被这类事件触发。
+   *   · 只认「落在 <html> 自己身上」的进出事件。pointerleave / pointerenter 会在
+   *     **每个后代元素**上各来一次（切换伪装时能连出七八个），拿它们当依据的话，
+   *     恢复之后残留的那一下会把伪装立刻又打开（实测「返回页面后仍然在伪装」就是这个）。
+   *     真正「指针离开页面」只落在 documentElement 上，所以按 e.target 过滤。
+   *   · 只认「坐标有意义」的进出事件。脚本自己、别的扩展或自动化工具 dispatch 出来的
+   *     合成事件坐标是 0,0，若拿它当依据，会在「刚藏好」和「立刻放回来」之间抖一下 ——
+   *     pointerleave 一进来就 setBoss(true)，紧接着的合成 pointerenter 又把伪装撤掉，
+   *     伪装视图等于闪一下就没了。所以明确忽略这类事件。
+   *   · 恢复还必须等「指针真的动过」。这一条是实测逼出来的：伪装视图一出现，
+   *     鼠标底下那层元素就换了，Chrome 会**重新做一次命中测试**并补发一串
+   *     pointerenter —— 哪怕鼠标一下都没动。对「藏」来说这是好事（不用等用户动鼠标），
+   *     但要是拿它当「用户回来了」，就会出现「按两下 Esc 藏好、一秒后又自己冒回来」。
+   *     所以：藏用第一次 pointerleave；恢复等 pointermove（Chrome 的顺序是
+   *     pointerenter 先于第一个 pointermove，只等 enter 会永远等不到）。
+   */
+  let sidebarMask = { on: false, moved: true };
+
+  /** 合成事件（dispatch 出来的）坐标是 0,0；真实指针事件一定带视口坐标 */
+  function realPointer(e) {
+    return !(e.isTrusted === false && !e.clientX && !e.clientY);
+  }
+
+  /** 事件是不是真的落在 <html> 上（而不是被某个后代元素冒上来的） */
+  function onDocumentElement(e) {
+    return e.target === document.documentElement;
+  }
+
+  function sidebarMaskLeave(e) {
+    if (!onDocumentElement(e)) return;
+    if (!realPointer(e)) return;
+    if (!cfg("stealth") || !cfg("sidebarMask")) return;
+    if (bossOn()) return;            // 已经是伪装视图了，不用再藏
+    if (settingsOpen()) return;      // 正在调设置，别把面板盖掉
+    sidebarMask.on = true;
+    sidebarMask.moved = false;       // 下一次 pointerenter 先不算「人回来了」
+    setBoss(true);
+  }
+
+  function sidebarMaskEnter(e) {
+    if (!onDocumentElement(e)) return;
+    if (!realPointer(e)) return;
+    if (!sidebarMask.on) return;
+    if (!sidebarMask.moved) return;  // 伪装视图出现时 Chrome 补发的那次，不算回到页面
+    sidebarMask.on = false;
+    // 关掉「回到页面自动恢复」时只把标记清掉：伪装视图留着，等人自己按应急键
+    if (!cfg("sidebarMaskRestore")) return;
+    // 只在「还是自己藏出来的那个状态」时恢复：期间要是又手动切过，就听用户的
+    if (bossOn()) setBoss(false);
+  }
+
+  /**
+   * 「人回来了」最终落在这里：指针在页面里动了。
+   *
+   * 不能只靠 pointerenter —— 实测 Chrome 的顺序是 pointerenter（刚进视口）
+   * **先于** 第一个 pointermove，而那一刻 moved 还是 false、会被上面挡掉，
+   * 只认 enter 就成了「藏了就再也回不来」。所以恢复放在移动上，
+   * 两个顺序都覆盖：
+   *   · 先 move 后 enter → 这里恢复，随后的 enter 变成空操作；
+   *   · 先 enter 后 move → enter 被挡，紧接着的 move 恢复。
+   */
+  function sidebarMaskMoved() {
+    sidebarMask.moved = true;
+    if (!sidebarMask.on) return;
+    if (!cfg("sidebarMaskRestore")) return;
+    if (!bossOn()) return;
+    sidebarMask.on = false;
+    setBoss(false);
+  }
+
+  function bindSidebarMask() {
+    const enter = "onpointerenter" in window ? "pointerenter" : "mouseenter";
+    const leave = "onpointerleave" in window ? "pointerleave" : "mouseleave";
+    // 挂在 <html> 上、用捕获阶段接收「落在 <html> 自己身上」的那一次
+    document.documentElement.addEventListener(leave, sidebarMaskLeave, true);
+    document.documentElement.addEventListener(enter, sidebarMaskEnter, true);
+    // 指针一动就说明「用户真的在看这个窗口」，恢复才有意义
+    document.addEventListener("pointermove", sidebarMaskMoved, true);
+  }
+
+  /** 关掉「侧边栏模式」时，把「这次是自动藏的」这个标记清掉（伪装视图本身留着） */
+  function syncSidebarMask() {
+    if (cfg("stealth") && cfg("sidebarMask")) return;
+    sidebarMask.on = false;
+    sidebarMask.moved = true;
+  }
+
   /* ============================== 设置面板 ============================== */
 
   const SETTING_CSS_VAR = {
@@ -4799,7 +4964,8 @@
     panelWidth: "--hpcx-panel-w",
     threadMaxWidth: "--hpcx-thread-max",
     thumbWidth: "--hpcx-thumb-w",
-    thumbHeight: "--hpcx-thumb-h"
+    thumbHeight: "--hpcx-thumb-h",
+    pageAlpha: { var: "--hpcx-chrome-alpha", scale: 0.01 }
   };
 
   /** 颜色类设置的默认色（用户点了「重置颜色」就回到这里） */
@@ -4812,6 +4978,9 @@
       { key: "railWidth", type: "range", label: "左栏宽度", min: 200, max: 520, step: 2, unit: "px" },
       { key: "panelWidth", type: "range", label: "代码面板宽度", min: 240, max: 900, step: 4, unit: "px" },
       { key: "threadMaxWidth", type: "range", label: "正文最大宽度", min: 560, max: 1100, step: 10, unit: "px" },
+      { key: "pageAlpha", type: "range", label: "页面透明度", min: 20, max: 100, step: 1, unit: "%",
+        hint: "100% = 不透明。只把脚本自己画的那两块（左栏 + 主区）调淡，能看见背后的窗口；" +
+          "伪装视图和设置面板始终不透明，原生页面也不受影响" },
       { key: "codePanel", type: "toggle", label: "显示右侧代码面板", hint: "那块代码是假数据，纯氛围" },
       { key: "lang", type: "select", label: "代码面板语言",
         options: () => Object.keys(CODE_LANGS).map((k) => [k, CODE_LANGS[k].label]) },
@@ -4825,6 +4994,13 @@
         hint: "出现在代码面板面包屑和标签页标题里（如 \"topic_cache.rs — platform\"）" },
       { key: "stealthKey", type: "select", label: "应急伪装键", hint: "Ctrl+Shift+H 始终有效",
         options: [["esc2", "连按两下 Esc"], ["f2", "F2"], ["ctrl+shift+h", "Ctrl+Shift+H"]] },
+      { key: "sidebarMask", type: "toggle", label: "侧边栏模式",
+        hint: "光标离开页面区域就自动进入伪装视图（等于替你按两下 Esc）；" +
+          "手动按出来的伪装不受影响，设置面板开着时不触发" },
+      { key: "sidebarMaskRestore", type: "toggle", label: "回到页面自动恢复",
+        hint: "关掉就只负责「藏」：光标回来也不退出伪装，得自己按应急键。",
+        // 依赖：没开「侧边栏模式」时这一项没意义，禁掉
+        enabledWhen: () => !!cfg("sidebarMask") },
       { key: "favicon", type: "select", label: "标签页图标",
         options: [["codex", "Codex 风格圆角图标"], ["site", "保留虎扑原图标"]] }
     ] },
@@ -4914,8 +5090,30 @@
   }
 
   function previewSetting(key, value) {
-    const varName = SETTING_CSS_VAR[key];
-    if (varName) document.documentElement.style.setProperty(varName, value + "px");
+    const m = SETTING_CSS_VAR[key];
+    if (!m) return;
+    // 多数滑块是像素；透明度这类需要换算（100% → 1），所以允许写成 { var, scale }
+    const varName = typeof m === "string" ? m : m.var;
+    const scale = typeof m === "string" ? 1 : (m.scale == null ? 1 : m.scale);
+    const unit = scale === 1 ? "px" : "";
+    // 0.01 这类换算会带出浮点尾巴（35 * 0.01 = 0.35000000000000003），收一下
+    const n = Math.round(value * scale * 10000) / 10000;
+    document.documentElement.style.setProperty(varName, n + unit);
+  }
+
+  /**
+   * 有依赖关系的设置（比如「回到页面自动恢复」得先开「侧边栏模式」）：
+   * 依赖没满足时把控件禁掉并整行压暗 —— 光靠文案说「先开上一项」很容易被忽略。
+   */
+  function syncSettingEnabled(m) {
+    m.querySelectorAll("[data-row]").forEach((row) => {
+      const it = specItem(row.dataset.row);
+      if (!it) return;
+      const on = !it.enabledWhen || !!it.enabledWhen();
+      row.classList.toggle("hpcx-set-row-off", !on);
+      row.querySelectorAll("[data-set-toggle], [data-set-range], [data-set-select]")
+        .forEach((c) => { c.disabled = !on; });
+    });
   }
 
   function syncSettingControls() {
@@ -4944,6 +5142,7 @@
       const btn = wrap && wrap.querySelector("[data-color-off]");
       if (btn) btn.classList.toggle("on", off);
     });
+    syncSettingEnabled(m);
   }
 
   function renderSettingsPanel() {
@@ -4984,6 +5183,7 @@
   function openSettings() {
     const m = renderSettingsPanel();
     m.hidden = false;
+    syncSettingControls();          // 有依赖关系的项要在打开时就摆对（禁用 / 压暗）
     m.querySelector("[data-settings-close]")?.focus();
   }
 
@@ -5003,18 +5203,21 @@
       if (t.closest("[data-settings-reset]")) {
         resetSettings();
         renderSettingsPanel();
+        syncSettingControls();
         toastNow("已恢复默认设置");
         return;
       }
       if (t === m) { closeSettings(); return; }
 
       const sw = t.closest("[data-set-toggle]");
-      if (sw) {
+      if (sw && !sw.disabled) {
         const key = sw.dataset.setToggle;
         const next = !cfg(key);
         sw.classList.toggle("on", next);
         sw.setAttribute("aria-checked", next ? "true" : "false");
         setCfg(key, next);
+        // 切换的可能正是别人的依赖项（侧边栏模式 ↔ 回到页面自动恢复）
+        syncSettingEnabled(m);
         return;
       }
 
@@ -5033,7 +5236,7 @@
     // 滑块 / 取色器：input 只预览，change 才落盘 + 重渲染
     document.addEventListener("input", (e) => {
       const r = e.target;
-      if (!r.dataset) return;
+      if (!r.dataset || r.disabled) return;
       if (r.dataset.setColor) {
         const key = r.dataset.setColor;
         const wrap = r.closest("[data-color-wrap]");
@@ -5069,7 +5272,7 @@
 
     document.addEventListener("change", (e) => {
       const r = e.target;
-      if (!r.dataset) return;
+      if (!r.dataset || r.disabled) return;
       if (r.dataset.setRange) setCfg(r.dataset.setRange, Number(r.value));
       else if (r.dataset.setSelect) setCfg(r.dataset.setSelect, r.value);
       else if (r.dataset.setText) setCfg(r.dataset.setText, r.value);
@@ -5378,6 +5581,7 @@
     bindImgPreview();
     bindSettingsPanel();
     bindStealthKeys();
+    bindSidebarMask();
     bindSettingsKeys();
     bindPublish();
     bindRail();

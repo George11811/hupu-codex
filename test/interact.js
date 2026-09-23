@@ -77,10 +77,50 @@ function click(w, node) {
   node.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
 }
 
+/**
+ * 指针移出/移入「页面区域」。
+ *
+ * 代码优先监听 pointerleave / pointerenter，jsdom 里没有 PointerEvent，
+ * 于是它自己退化成 mouseleave / mouseenter —— 这里按「脚本实际会监听的那个」
+ * 来派发，否则测试会因为环境差异而假过。
+ *
+ * 两个必须照真实浏览器行为来的细节：
+ *
+ * 1. 坐标要给非零值。脚本会忽略「合成事件 + 0,0 坐标」，因为那种事件会把刚藏好的
+ *    伪装立刻又放回来（真实鼠标不会这样）。
+ * 3. 进出事件要落在 <html> **自己**身上（而不是某个后代）。真实浏览器里
+ *    pointerleave / pointerenter 会在每个后代元素上各来一次，脚本按 e.target 过滤，
+ *    只认落在 <html> 上的那一次；测试要是从某个子节点派发，等于在测别的东西。
+ */
+function pointerMove(w) {
+  const target = (w.document && w.document.body) || w;
+  target.dispatchEvent(new w.MouseEvent("pointermove", {
+    bubbles: true, cancelable: true, clientX: 1, clientY: 1
+  }));
+  if (!("onpointermove" in w)) w.document.dispatchEvent(new w.Event("pointermove", { bubbles: true }));
+}
+function pointerLeave(w) {
+  const root = w.document.documentElement;
+  const type = "onpointerleave" in w ? "pointerleave" : "mouseleave";
+  root.dispatchEvent(new w.MouseEvent(type, { bubbles: false, cancelable: true, clientX: 1, clientY: 1 }));
+}
+function pointerEnter(w) {
+  // 真人回来时手一定在动：先动一下（脚本据此判断「人回来了」），再补 enter
+  pointerMove(w);
+  const root = w.document.documentElement;
+  const type = "onpointerenter" in w ? "pointerenter" : "mouseenter";
+  root.dispatchEvent(new w.MouseEvent(type, { bubbles: false, cancelable: true, clientX: 1, clientY: 1 }));
+}
+/** 从某个后代元素冒上来的进出事件：脚本必须忽略（只有落在 <html> 上的才算） */
+function childPointerLeave(w, node) {
+  const type = "onpointerleave" in w ? "pointerleave" : "mouseleave";
+  node.dispatchEvent(new w.MouseEvent(type, { bubbles: false, cancelable: true, clientX: 1, clientY: 1 }));
+}
+
 /** 打开/关闭设置面板（测试里用来制造额外 render） */
 function openSettings4Test(w, doc) {
-  const btn = doc.querySelector("[data-settings-open]");
-  if (btn) click(w, btn);
+  // 用 Ctrl+, 打开：和真实用户路径一致，也能覆盖键盘绑定
+  key(w, { key: ",", ctrlKey: true });
   return doc.querySelector(".hpcx-modal");
 }
 function closeSettings4Test(w, doc) {
@@ -217,6 +257,162 @@ function closeSettings4Test(w, doc) {
     });
     eq(errors.length, 0, "全流程无报错: " + errors.join(" | "));
     second.w.close();
+  }
+
+  /* ---------- 2.4 页面透明度 + 侧边栏模式 ---------- */
+  console.log("\n▶ 页面透明度 / 侧边栏模式");
+  {
+    const { w, doc, errors } = await boot("topic-daily.html", "https://bbs.hupu.com/topic-daily",
+      { pageAlpha: 60, sidebarMask: true });
+    const root = doc.documentElement;
+
+    check("透明度设置写进 --hpcx-chrome-alpha（60% → 0.6）", () => {
+      eq(root.style.getPropertyValue("--hpcx-chrome-alpha").trim(), "0.6", "CSS 变量");
+    });
+
+    // 没配置过的时候是「不透明」
+    const def = await boot("topic-daily.html", "https://bbs.hupu.com/topic-daily");
+    check("默认 --hpcx-chrome-alpha = 1", () => {
+      eq(def.doc.documentElement.style.getPropertyValue("--hpcx-chrome-alpha").trim(), "1", "默认不透明");
+    });
+    def.w.close();
+
+    // 面板里的滑块：input 即时预览、change 落盘
+    openSettings4Test(w, doc);
+    const range = doc.querySelector('[data-set-range="pageAlpha"]');
+    check("设置面板里有透明度滑杆", () => ok(range, "滑杆存在"));
+    check("滑杆的显示值带 % 单位", () => {
+      eq(doc.querySelector('[data-set-val="pageAlpha"]').textContent, "60%", "初始显示");
+    });
+    range.value = "35";
+    range.dispatchEvent(new w.Event("input", { bubbles: true }));
+    check("拖滑杆即时预览（不落盘）", () => {
+      eq(root.style.getPropertyValue("--hpcx-chrome-alpha").trim(), "0.35", "CSS 变量已变");
+      eq(doc.querySelector('[data-set-val="pageAlpha"]').textContent, "35%", "显示值已变");
+    });
+    range.dispatchEvent(new w.Event("change", { bubbles: true }));
+    check("松手才落盘", () => {
+      eq(JSON.parse(w.localStorage.getItem("hpcx:settings")).pageAlpha, 35, "已落盘");
+    });
+
+    // 侧边栏模式：光标离开页面区域 → 自动伪装；回来 → 恢复
+    check("初始未伪装", () => eq(root.classList.contains("hpcx-boss-on"), false, "boss-on 不存在"));
+
+    // 设置面板开着时不触发（否则滑杆还没调完整页就被盖住了）
+    pointerLeave(w);
+    check("设置面板开着时离开页面不伪装", () => {
+      eq(root.classList.contains("hpcx-boss-on"), false, "没被自动盖住");
+    });
+    closeSettings4Test(w, doc);
+
+    pointerLeave(w);
+    check("侧边栏模式：离开页面区域自动进伪装视图", () => {
+      eq(root.classList.contains("hpcx-boss-on"), true, "boss-on 已加");
+      const box = doc.querySelector(".hpcx-boss");
+      ok(box && box.hidden === false, "伪装视图可见");
+      ok(box.querySelectorAll(".hpcx-code-line").length >= 70, "有代码行");
+    });
+
+    pointerEnter(w);
+    check("回到页面自动恢复", () => eq(root.classList.contains("hpcx-boss-on"), false, "boss-on 已移除"));
+
+    // 鼠标没动、只是「伪装视图出现导致底层元素换了」时 Chrome 补发的 pointerenter，
+    // 不能被当成「人回来了」（否则藏好之后会自己冒回来）
+    pointerLeave(w);
+    const fake = new w.MouseEvent("onpointerenter" in w ? "pointerenter" : "mouseenter",
+      { bubbles: false, cancelable: true, clientX: 1, clientY: 1 });
+    root.dispatchEvent(fake);
+    check("鼠标没动时的 pointerenter 不会把伪装放回来（挡掉 Chrome 补发的那个）", () => {
+      eq(root.classList.contains("hpcx-boss-on"), true, "还在伪装视图");
+    });
+    // 从后代元素冒上来的 pointerleave 也不算「离开页面」（真实浏览器会连出七八个）
+    childPointerLeave(w, doc.querySelector(".hpcx-thread") || doc.body);
+    check("后代元素上的 pointerleave 不算离开页面（否则恢复后会被重新打开）", () => {
+      eq(root.classList.contains("hpcx-boss-on"), true, "还在伪装视图");
+    });
+    pointerEnter(w);
+    check("鼠标一动就恢复", () => eq(root.classList.contains("hpcx-boss-on"), false, "已恢复"));
+
+    // 手动按出来的伪装不该被「回到页面」撤掉
+    key(w, { key: "Escape" });
+    key(w, { key: "Escape" });
+    pointerEnter(w);
+    check("手动按出来的伪装，回到页面不会被自动撤掉", () => {
+      eq(root.classList.contains("hpcx-boss-on"), true, "还在伪装视图");
+    });
+    key(w, { key: "Escape" });
+    key(w, { key: "Escape" });
+
+    // 关掉侧边栏模式就不再自动伪装
+    openSettings4Test(w, doc);
+    const sideToggle = doc.querySelector('[data-set-toggle="sidebarMask"]');
+    check("设置面板里有侧边栏模式开关", () => ok(sideToggle, "开关存在"));
+    click(w, sideToggle);
+    check("关掉侧边栏模式 → 离开页面不再伪装", () => {
+      eq(JSON.parse(w.localStorage.getItem("hpcx:settings")).sidebarMask, false, "已落盘");
+      eq(sideToggle.classList.contains("on"), false, "开关状态同步");
+      pointerLeave(w);
+      eq(root.classList.contains("hpcx-boss-on"), false, "没有自动伪装");
+    });
+    closeSettings4Test(w, doc);
+
+    check("全流程无报错", () => eq(errors.length, 0, errors.join(" | ")));
+    w.close();
+
+    /* —— 主区可见性：只淡脚本自绘的那两块 —— */
+    const only = await boot("topic-daily.html", "https://bbs.hupu.com/topic-daily",
+      { pageAlpha: 50 });
+    check("透明度变量只喂给 .hpcx-rail / .hpcx-main", () => {
+      const css = [...only.doc.querySelectorAll("style")].map((s) => s.textContent).join("\n");
+      ok(/\.hpcx-rail\s*,\s*\.hpcx-main\s*\{\s*opacity:\s*var\(--hpcx-chrome-alpha/.test(css),
+        "规则存在");
+      ok(!/html\s*\{[^}]*opacity/.test(css), "没有把 opacity 写到 html 上");
+    });
+    only.w.close();
+
+    /* —— 「回到页面自动恢复」是配置项 —— */
+    const noRestore = await boot("topic-daily.html", "https://bbs.hupu.com/topic-daily",
+      { sidebarMask: true, sidebarMaskRestore: false });
+    pointerLeave(noRestore.w);
+    check("关掉自动恢复 → 离开页面照样藏", () => {
+      eq(noRestore.doc.documentElement.classList.contains("hpcx-boss-on"), true, "已进伪装视图");
+    });
+    pointerEnter(noRestore.w);
+    check("关掉自动恢复 → 回到页面不退出伪装（得自己按应急键）", () => {
+      eq(noRestore.doc.documentElement.classList.contains("hpcx-boss-on"), true, "还在伪装视图");
+    });
+    key(noRestore.w, { key: "Escape" });
+    key(noRestore.w, { key: "Escape" });
+    check("关掉自动恢复时应急键仍然能退出", () => {
+      eq(noRestore.doc.documentElement.classList.contains("hpcx-boss-on"), false, "已退出");
+    });
+    // 再离开一次仍然要藏（标记不能被「上次没恢复」卡住）
+    pointerLeave(noRestore.w);
+    check("关掉自动恢复 → 再离开一次仍会藏", () => {
+      eq(noRestore.doc.documentElement.classList.contains("hpcx-boss-on"), true, "已进伪装视图");
+    });
+    noRestore.w.close();
+
+    /* —— 依赖项：没开侧边栏模式时，「回到页面自动恢复」应该是禁用的 —— */
+    const dep = await boot("topic-daily.html", "https://bbs.hupu.com/topic-daily",
+      { sidebarMask: false });
+    openSettings4Test(dep.w, dep.doc);
+    check("没开侧边栏模式 → 「回到页面自动恢复」禁用并压暗", () => {
+      const row = dep.doc.querySelector('[data-row="sidebarMaskRestore"]');
+      const sw = dep.doc.querySelector('[data-set-toggle="sidebarMaskRestore"]');
+      ok(row && sw, "行和开关都在");
+      eq(sw.disabled, true, "开关已禁用");
+      ok(row.classList.contains("hpcx-set-row-off"), "整行压暗");
+    });
+    click(dep.w, dep.doc.querySelector('[data-set-toggle="sidebarMask"]'));
+    check("打开侧边栏模式后依赖项立刻可用", () => {
+      const sw = dep.doc.querySelector('[data-set-toggle="sidebarMaskRestore"]');
+      eq(sw.disabled, false, "开关已启用");
+      eq(dep.doc.querySelector('[data-row="sidebarMaskRestore"]').classList.contains("hpcx-set-row-off"),
+        false, "压暗已去掉");
+    });
+    closeSettings4Test(dep.w, dep.doc);
+    dep.w.close();
   }
 
   /* ---------- 3. 草稿板 ---------- */
