@@ -535,6 +535,62 @@ function check(name, cond, extra) {
     await page.waitForTimeout(150);
     check("点 ✕ 回到普通标题",
       await page.evaluate(() => !document.querySelector(".hpcx-composer-target").classList.contains("quoting")));
+
+    /* —— 底部回复栏的收起 / 展开：要真的变矮、真的让出正文位置 —— */
+    const collapsed = await page.evaluate(() => {
+      const wrap = document.querySelector(".hpcx-composer-wrap");
+      const box = document.querySelector(".hpcx-composer");
+      const thread = document.querySelector(".hpcx-thread");
+      const before = {
+        h: Math.round(box.getBoundingClientRect().height),
+        w: Math.round(box.getBoundingClientRect().width),
+        threadH: Math.round(thread.getBoundingClientRect().height)
+      };
+      document.querySelector(".hpcx-composer-fold").click();
+      const cs = (s) => getComputedStyle(document.querySelector(s));
+      return {
+        before: before,
+        after: {
+          h: Math.round(box.getBoundingClientRect().height),
+          w: Math.round(box.getBoundingClientRect().width),
+          threadH: Math.round(thread.getBoundingClientRect().height)
+        },
+        editor: cs(".hpcx-editor").display,
+        bar: cs(".hpcx-composer-bar").display,
+        head: cs(".hpcx-composer-head").display,
+        cls: wrap.classList.contains("collapsed"),
+        aria: document.querySelector(".hpcx-composer-fold").getAttribute("aria-expanded")
+      };
+    });
+    check("点收起 → 编辑区和工具栏都收起来（头部那一行还在）",
+      collapsed.editor === "none" && collapsed.bar === "none" && collapsed.head !== "none",
+      JSON.stringify(collapsed));
+    check("收起后确实变矮（明显小于展开时的 2/3）",
+      collapsed.after.h < collapsed.before.h * 0.67,
+      collapsed.before.h + " → " + collapsed.after.h);
+    check("收起后收成一条小胶囊（比原来窄）",
+      collapsed.after.w < collapsed.before.w && collapsed.after.w <= 460,
+      collapsed.before.w + " → " + collapsed.after.w);
+    check("收起让出的高度给了正文区", collapsed.after.threadH > collapsed.before.threadH,
+      collapsed.before.threadH + " → " + collapsed.after.threadH);
+    check("收起态按钮语义跟着变", collapsed.cls && collapsed.aria === "false",
+      JSON.stringify({ cls: collapsed.cls, aria: collapsed.aria }));
+
+    // 展开回来：高度恢复
+    const expanded = await page.evaluate(() => {
+      document.querySelector(".hpcx-composer-fold").click();
+      const box = document.querySelector(".hpcx-composer");
+      return {
+        h: Math.round(box.getBoundingClientRect().height),
+        editor: getComputedStyle(document.querySelector(".hpcx-editor")).display,
+        aria: document.querySelector(".hpcx-composer-fold").getAttribute("aria-expanded"),
+        focused: document.activeElement === document.querySelector(".hpcx-editor")
+      };
+    });
+    check("再点展开 → 高度回到收起前", expanded.h === collapsed.before.h,
+      expanded.h + " vs " + collapsed.before.h);
+    check("展开后编辑区回来且拿到焦点", expanded.editor !== "none" && expanded.focused && expanded.aria === "true",
+      JSON.stringify(expanded));
   }
 
   console.log("\n▶ 回帖输入框（未登录）");

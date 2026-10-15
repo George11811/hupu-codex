@@ -2633,6 +2633,9 @@
   /** 当前正在回复的楼层（点某楼的「回复」时设置） */
   let REPLY_TARGET = null;
 
+  /** 底部回复栏是否收起了（只活在这次浏览里，不落盘：它是「眼下这一眼」的状态） */
+  let COLLAPSED = false;
+
   /**
    * 拼接口要的 body。
    *
@@ -2868,6 +2871,8 @@
       (canPost ? "Ctrl+Enter 发表"
         // 列表页本来就不能回帖，别把原因说成「未登录」
         : isThread ? "未登录 · 仅本地草稿" : "随手记 · 只存本机") + "</span>" +
+      // 收起按钮：把回复栏压成一行，给正文让出位置（状态存在 COLLAPSED 里，跨页面保留）
+      '<button type="button" class="hpcx-composer-fold" data-md="fold"></button>' +
       "</div>" +
       '<div class="hpcx-editor" contenteditable="true" spellcheck="false" ' +
       'data-placeholder="' + (canPost ? "写点什么…（Ctrl+Enter 发表）" : "写点什么…（未登录，Ctrl+Enter 复制草稿）") + '"></div>' +
@@ -2902,8 +2907,50 @@
 
     const edit = wrap.querySelector(".hpcx-editor");
     edit.textContent = loadDraft();
+    syncComposerFold(wrap);
     renderReplyTarget();
     syncComposerState();
+  }
+
+  /**
+   * 底部回复栏的「收起 / 展开」。
+   *
+   * 收起后只留头部那一行（标题 + 收起按钮），正文区、预览区、工具栏整块让出去 ——
+   * 列表页和长帖里正文能多出 80 多像素。状态放在 COLLAPSED 而不是 wrap 上，
+   * 因为换版块 / 翻页走软导航时 wrap 会被重建（不持久化到 localStorage：
+   * 它是「当前这一眼」的状态，不是长期偏好）。
+   */
+  function syncComposerFold(wrap) {
+    if (!wrap) return;
+    wrap.classList.toggle("collapsed", COLLAPSED);
+    const btn = wrap.querySelector(".hpcx-composer-fold");
+    if (!btn) return;
+    btn.innerHTML = ic("chevronDown");
+    btn.title = COLLAPSED ? "展开回复栏" : "收起回复栏";
+    btn.setAttribute("aria-label", btn.title);
+    btn.setAttribute("aria-expanded", COLLAPSED ? "false" : "true");
+  }
+
+  function toggleComposerFold() {
+    const wrap = document.querySelector(".hpcx-main .hpcx-composer-wrap");
+    if (!wrap) return;
+    COLLAPSED = !COLLAPSED;
+    syncComposerFold(wrap);
+    if (!COLLAPSED) {
+      // 展开后直接把光标放回草稿末尾，接着写就行
+      const edit = wrap.querySelector(".hpcx-editor");
+      if (edit) {
+        edit.focus();
+        const range = document.createRange();
+        range.selectNodeContents(edit);
+        range.collapse(false);
+        const sel = window.getSelection();
+        if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+      }
+    } else if (document.activeElement && document.activeElement.closest &&
+      document.activeElement.closest(".hpcx-editor")) {
+      document.activeElement.blur();
+    }
   }
 
   function setCaret(node, offset) {
@@ -3035,6 +3082,8 @@
       } else if (kind === "cancel-quote") {
         REPLY_TARGET = null;
         renderReplyTarget();
+      } else if (kind === "fold") {
+        toggleComposerFold();
       }
     });
   }
@@ -4246,6 +4295,28 @@
       color: var(--cx-text-dim);
     }
     .hpcx-composer-hint { flex: 0 0 auto; }
+    /* 收起 / 展开按钮：常驻可见但很淡，悬停 / 键盘聚焦时才「亮起来」 */
+    .hpcx-composer-fold {
+      flex: 0 0 auto;
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 22px; height: 22px; padding: 0;
+      border: 0; border-radius: 6px; background: transparent;
+      color: var(--cx-text-faint); cursor: pointer;
+      transition: color .15s ease, background .15s ease;
+    }
+    .hpcx-composer-fold svg { width: 15px; height: 15px; transition: transform .18s ease; }
+    .hpcx-composer-fold:hover { background: var(--cx-wash); color: var(--cx-text); }
+    .hpcx-composer-fold:focus-visible { outline: 2px solid var(--cx-blue); outline-offset: 1px; }
+    .hpcx-composer-wrap.collapsed .hpcx-composer { padding: 6px 12px 6px; }
+    .hpcx-composer-wrap.collapsed .hpcx-composer-head { margin-bottom: 0; }
+    .hpcx-composer-wrap.collapsed .hpcx-composer-fold svg { transform: rotate(180deg); }
+    .hpcx-composer-wrap.collapsed .hpcx-editor,
+    .hpcx-composer-wrap.collapsed .hpcx-composer-preview,
+    .hpcx-composer-wrap.collapsed .hpcx-composer-bar { display: none; }
+    /* 收起时整条收成一个小胶囊并居中：别在底部留一大块空壳 */
+    .hpcx-composer-wrap.collapsed .hpcx-composer {
+      width: min(460px, 100%); margin: 0 auto;
+    }
     .hpcx-editor {
       min-height: 54px; max-height: 240px; overflow-y: auto;
       font-size: 13.5px; line-height: 1.7; color: var(--cx-text);

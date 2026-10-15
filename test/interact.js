@@ -479,6 +479,49 @@ function closeSettings4Test(w, doc) {
       eq(w.localStorage.getItem("hpcx:draft:642400850"), null, "localStorage 已清");
     });
 
+    /* —— 底部回复栏的收起 / 展开 —— */
+    const fold = doc.querySelector(".hpcx-composer-fold");
+    const wrapEl = doc.querySelector(".hpcx-composer-wrap");
+    check("回复栏有收起按钮", () => {
+      ok(fold, "按钮存在");
+      ok(/收起/.test(fold.title), "标题: " + fold.title);
+      eq(fold.getAttribute("aria-expanded"), "true", "初始 aria-expanded=true");
+    });
+
+    // 收起前先留点内容，验证收起不会丢草稿
+    const edit3 = doc.querySelector(".hpcx-editor");
+    edit3.textContent = "收起之后草稿还得在";
+    edit3.dispatchEvent(new w.Event("input", { bubbles: true }));
+
+    click(w, fold);
+    check("点收起 → 加上 collapsed 类", () => {
+      eq(wrapEl.classList.contains("collapsed"), true, "已收起");
+      ok(/展开/.test(fold.title), "标题变成展开: " + fold.title);
+      eq(fold.getAttribute("aria-expanded"), "false", "aria-expanded=false");
+    });
+
+    check("收起后草稿内容不丢", () => {
+      eq(doc.querySelector(".hpcx-editor").textContent, "收起之后草稿还得在", "内容还在");
+      eq(w.localStorage.getItem("hpcx:draft:642400850"), "收起之后草稿还得在", "也还落着盘");
+    });
+
+    click(w, fold);
+    check("再点展开 → 去掉 collapsed 类，光标回到草稿末尾", () => {
+      eq(wrapEl.classList.contains("collapsed"), false, "已展开");
+      eq(fold.getAttribute("aria-expanded"), "true", "aria-expanded=true");
+      eq(doc.activeElement, doc.querySelector(".hpcx-editor"), "焦点回到编辑区");
+      const sel = w.getSelection();
+      eq(sel.rangeCount > 0 && sel.getRangeAt(0).collapsed, true, "光标是收起状态（点在末尾）");
+    });
+
+    // 换页面（composer 重建）之后按钮还在、收起仍然可用
+    const rl = await boot("post.html", "https://bbs.hupu.com/642400850.html");
+    click(rl.w, rl.doc.querySelector(".hpcx-composer-fold"));
+    check("新页面里也能收起", () => {
+      eq(rl.doc.querySelector(".hpcx-composer-wrap").classList.contains("collapsed"), true, "已收起");
+    });
+    rl.w.close();
+
     check("全流程无报错", () => eq(errors.length, 0, errors.join(" | ")));
     w.close();
   }
