@@ -8,6 +8,7 @@
 // @icon         https://w1.hoopchina.com.cn/images/pc/old/favicon.ico
 // @grant        none
 // @run-at       document-start
+// @updateURL    https://raw.githubusercontent.com/George11811/hupu-codex/master/hupu-codex.user.js
 // ==/UserScript==
 
 /*
